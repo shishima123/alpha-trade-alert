@@ -136,15 +136,20 @@ setInterval(() => {
 const validAudio = new Audio(validSound)
 const invalidAudio = new Audio(invalidSound)
 
-// ===== Sorted: valid + low lên đầu =====
+// ===== Sorted: valid > low > invalid =====
 const sortedSymbols = computed(() => {
-  const top: string[] = []
-  const rest: string[] = []
+  const validArr: string[] = []
+  const lowArr: string[] = []
+  const invalidArr: string[] = []
+
   defaultOrder.value.forEach((sym) => {
-    if (coinStatus[sym] === 'valid' || coinStatus[sym] === 'low') top.push(sym)
-    else rest.push(sym)
+    const status = coinStatus[sym]
+    if (status === 'valid') validArr.push(sym)
+    else if (status === 'low') lowArr.push(sym)
+    else invalidArr.push(sym)
   })
-  return [...top, ...rest]
+
+  return [...validArr, ...lowArr, ...invalidArr]
 })
 
 // ===== Helper =====
