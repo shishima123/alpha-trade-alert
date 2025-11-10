@@ -1,17 +1,15 @@
 <template>
-  <div class="min-h-screen bg-gray-50 p-6">
+  <div class="min-h-screen bg-gray-900 p-6 text-gray-200">
     <!-- Header và checkbox -->
     <div class="flex items-center justify-between mb-6 gap-4 flex-wrap">
-      <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
-        📊 Kiểm tra độ ổn định
-      </h1>
+      <h1 class="text-2xl font-bold flex items-center gap-2">📊 Kiểm tra độ ổn định</h1>
       <div class="flex items-center gap-2">
         <input type="checkbox" id="enableSound" v-model="soundEnabled" class="w-4 h-4" />
-        <label for="enableSound" class="text-gray-700">🔊 Nhấn để bật âm thanh</label>
+        <label for="enableSound">🔊 Nhấn để bật âm thanh</label>
       </div>
     </div>
 
-    <div v-if="loading" class="text-gray-500 text-center py-10">
+    <div v-if="loading" class="text-gray-400 text-center py-10">
       ⏳ Đang tải dữ liệu từ Binance...
     </div>
 
@@ -19,26 +17,26 @@
       <div
         v-for="(symbol, index) in sortedSymbols"
         :key="symbol"
-        class="bg-white rounded-2xl shadow-md border border-gray-100 transition-all duration-300 p-5"
+        class="bg-gray-800 rounded-2xl shadow-md border border-gray-700 transition-all duration-300 p-5"
         :class="[
           coinStatus[symbol] === 'valid'
             ? 'ring-4 ring-green-400 shadow-xl scale-[1.02]'
             : coinStatus[symbol] === 'low'
-              ? 'border-yellow-400 ring-2 ring-yellow-300 shadow-lg scale-[1.01]'
+              ? 'border-yellow-500 ring-2 ring-yellow-400 shadow-lg scale-[1.01]'
               : '',
           flashClass[symbol],
         ]"
       >
         <!-- Header + badge + thời gian ổn định -->
         <div class="flex items-center justify-between mb-3">
-          <h3 class="font-semibold text-lg text-gray-800">{{ symbol }}</h3>
+          <h3 class="font-semibold text-lg">{{ symbol }}</h3>
           <div class="flex flex-col items-end">
             <span
               class="text-sm font-medium px-2 py-1 rounded-full"
               :class="{
-                'bg-green-100 text-green-700': coinStatus[symbol] === 'valid',
-                'bg-yellow-100 text-yellow-700': coinStatus[symbol] === 'low',
-                'bg-red-100 text-red-700': coinStatus[symbol] === 'invalid',
+                'bg-green-700 text-green-100': coinStatus[symbol] === 'valid',
+                'bg-yellow-700 text-yellow-100': coinStatus[symbol] === 'low',
+                'bg-red-700 text-red-100': coinStatus[symbol] === 'invalid',
               }"
             >
               {{
@@ -49,7 +47,7 @@
                     : 'Không ổn định'
               }}
             </span>
-            <span v-if="coinStatus[symbol] === 'valid'" class="text-xs text-gray-500 mt-1">
+            <span v-if="coinStatus[symbol] === 'valid'" class="text-xs text-gray-400 mt-1">
               Đã ổn định: {{ Math.floor((now - stableSince[symbol]) / 1000) }}s
             </span>
           </div>
@@ -59,17 +57,17 @@
         <div class="overflow-y-auto max-h-[240px]">
           <table class="min-w-full text-sm">
             <thead>
-              <tr class="border-b border-gray-200">
-                <th class="text-left py-1 text-gray-500 font-medium">#</th>
-                <th class="text-left py-1 text-gray-500 font-medium">Giá</th>
-                <th class="text-left py-1 text-gray-500 font-medium">Δ</th>
+              <tr class="border-b border-gray-700">
+                <th class="text-left py-1 font-medium">#</th>
+                <th class="text-left py-1 font-medium">Giá</th>
+                <th class="text-left py-1 font-medium">Δ</th>
               </tr>
             </thead>
             <tbody>
               <tr
                 v-for="(item, idx) in priceTracker[symbol].slice(0, maxLength)"
                 :key="idx"
-                class="border-b last:border-0"
+                class="border-b last:border-0 border-gray-700"
               >
                 <td class="py-1">{{ idx + 1 }}</td>
                 <td class="py-1 font-mono">{{ item.price.toFixed(8) }}</td>
@@ -78,10 +76,10 @@
                   :class="
                     item.diff !== null
                       ? item.diff > 0
-                        ? 'text-green-600'
+                        ? 'text-green-400'
                         : item.diff < 0
-                          ? 'text-red-500'
-                          : 'text-gray-600'
+                          ? 'text-red-400'
+                          : 'text-gray-400'
                       : ''
                   "
                 >
@@ -171,7 +169,6 @@ function showToast(message: string, type: 'valid' | 'invalid') {
     hideProgressBar: false,
     closeOnClick: true,
     pauseOnHover: true,
-    draggable: true,
   })
 }
 
