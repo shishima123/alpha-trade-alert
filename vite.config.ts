@@ -16,7 +16,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'robots.txt', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Crypto Stability Checker',
+        name: 'Alpha Stability Checker',
         short_name: 'CryptoCheck',
         description: 'Kiểm tra độ ổn định của coin alpha Binance',
         theme_color: '#111827', // màu dark mode
