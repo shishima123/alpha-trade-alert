@@ -1,6 +1,6 @@
 <template>
   <div class="min-h-screen bg-gray-50 p-6">
-    <!-- Header và checkbox trên 1 dòng -->
+    <!-- Header và checkbox -->
     <div class="flex items-center justify-between mb-6 gap-4 flex-wrap">
       <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
         📊 Kiểm tra độ ổn định
@@ -29,29 +29,33 @@
           flashClass[symbol],
         ]"
       >
+        <!-- Header + badge + thời gian ổn định -->
         <div class="flex items-center justify-between mb-3">
           <h3 class="font-semibold text-lg text-gray-800">{{ symbol }}</h3>
-          <span
-            class="text-sm font-medium px-2 py-1 rounded-full"
-            :class="{
-              'bg-green-100 text-green-700': coinStatus[symbol] === 'valid',
-              'bg-yellow-100 text-yellow-700': coinStatus[symbol] === 'low',
-              'bg-red-100 text-red-700': coinStatus[symbol] === 'invalid',
-              'bg-gray-100 text-gray-500': coinStatus[symbol] === 'collecting',
-            }"
-          >
-            {{
-              coinStatus[symbol] === 'valid'
-                ? 'Ổn định'
-                : coinStatus[symbol] === 'low'
-                  ? 'Ổn định thấp'
-                  : coinStatus[symbol] === 'invalid'
-                    ? 'Không ổn định'
-                    : 'Đang thu thập...'
-            }}
-          </span>
+          <div class="flex flex-col items-end">
+            <span
+              class="text-sm font-medium px-2 py-1 rounded-full"
+              :class="{
+                'bg-green-100 text-green-700': coinStatus[symbol] === 'valid',
+                'bg-yellow-100 text-yellow-700': coinStatus[symbol] === 'low',
+                'bg-red-100 text-red-700': coinStatus[symbol] === 'invalid',
+              }"
+            >
+              {{
+                coinStatus[symbol] === 'valid'
+                  ? 'Ổn định'
+                  : coinStatus[symbol] === 'low'
+                    ? 'Ổn định thấp'
+                    : 'Không ổn định'
+              }}
+            </span>
+            <span v-if="coinStatus[symbol] === 'valid'" class="text-xs text-gray-500 mt-1">
+              Đã ổn định: {{ Math.floor((now - stableSince[symbol]) / 1000) }}s
+            </span>
+          </div>
         </div>
 
+        <!-- Table giá -->
         <div class="overflow-y-auto max-h-[240px]">
           <table class="min-w-full text-sm">
             <thead>
@@ -105,46 +109,46 @@ interface CoinInfo {
   alphaId: string
   volume24h: number
 }
-
 interface PriceEntry {
   price: number
   diff: number | null
 }
 
 const BINANCE_STREAM = 'wss://nbstream.binance.com/w3w/wsa/stream'
-const API_URL =
+const API_TOP =
   'https://www.binance.com/bapi/defi/v1/public/alpha-trade/aggTicker24?dataType=aggregate'
-
-const maxLength = 20
-const maxCoins = 10
+const MAX_RECORD = 20
 
 const priceTracker = reactive<Record<string, PriceEntry[]>>({})
 const alphaToSymbol = reactive<Record<string, string>>({})
-const coinStatus = reactive<Record<string, 'collecting' | 'valid' | 'invalid'>>({})
+const coinStatus = reactive<Record<string, 'valid' | 'low' | 'invalid'>>({})
 const flashClass = reactive<Record<string, string>>({})
-const loading = ref(true)
+const stableSince = reactive<Record<string, number>>({})
 const defaultOrder = ref<string[]>([])
-
+const loading = ref(true)
 const soundEnabled = ref(false)
+const now = ref(Date.now())
 
-// Audio instances
+// Cập nhật thời gian mỗi giây
+setInterval(() => {
+  now.value = Date.now()
+}, 1000)
+
 const validAudio = new Audio(validSound)
 const invalidAudio = new Audio(invalidSound)
 
-// ==== Sorted coin: Valid lên đầu, còn lại theo thứ tự mặc định ====
+// ===== Sorted: valid + low lên đầu =====
 const sortedSymbols = computed(() => {
   const top: string[] = []
   const rest: string[] = []
-
   defaultOrder.value.forEach((sym) => {
     if (coinStatus[sym] === 'valid' || coinStatus[sym] === 'low') top.push(sym)
     else rest.push(sym)
   })
-
   return [...top, ...rest]
 })
 
-// ==== Helper phát âm thanh ====
+// ===== Helper =====
 function playSound(type: 'valid' | 'invalid') {
   if (!soundEnabled.value) return
   const audio = type === 'valid' ? validAudio : invalidAudio
@@ -152,15 +156,14 @@ function playSound(type: 'valid' | 'invalid') {
   audio.play().catch(() => {})
 }
 
-// ==== Flash hiệu ứng ====
-function flash(symbol: string, type: 'valid' | 'invalid') {
-  flashClass[symbol] = type === 'valid' ? 'flash-green' : 'flash-red'
+function flash(symbol: string, type: 'valid' | 'low' | 'invalid') {
+  flashClass[symbol] =
+    type === 'valid' ? 'flash-green' : type === 'low' ? 'flash-yellow' : 'flash-red'
   setTimeout(() => {
     flashClass[symbol] = ''
   }, 400)
 }
 
-// ==== Toast Vue3-Toastify ====
 function showToast(message: string, type: 'valid' | 'invalid') {
   toast[type === 'valid' ? 'success' : 'error'](message, {
     position: 'bottom-right',
@@ -172,95 +175,71 @@ function showToast(message: string, type: 'valid' | 'invalid') {
   })
 }
 
-// ==== Kiểm tra valid ====
-function isValidArray(arr: number[]): boolean {
-  if (arr.length < 2) return false
+function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' {
+  if (arr.length < 2) return 'low'
+  let countInvalid = 0
   for (let i = 1; i < arr.length; i++) {
-    const diff = Math.abs((arr[i] - arr[i - 1]) * 1e8)
-    if (diff > 10) return false
+    if (Math.abs((arr[i] - arr[i - 1]) * 1e8) > 10) countInvalid++
   }
-  return true
+  if (countInvalid === 0) return 'valid'
+  if (countInvalid <= 2) return 'low'
+  return 'invalid'
 }
 
-async function collectInitialData(symbol: string, alphaId: string) {
-  try {
-    const url = `https://www.binance.com/bapi/defi/v1/public/alpha-trade/agg-trades?limit=20&symbol=${alphaId.toUpperCase()}USDT`
-    const { data } = await axios.get(url)
-    const trades: any[] = data?.data ?? []
-
-    const arr: PriceEntry[] = trades.map((t) => ({
-      price: parseFloat(t.p),
-      diff: null,
-    }))
-
-    // Tính diff
-    for (let i = 1; i < arr.length; i++) {
-      arr[i].diff = (arr[i].price - arr[i - 1].price) * 1e8
-    }
-
-    // Lưu vào reactive
-    priceTracker[symbol] = arr
-
-    // Cập nhật trạng thái ngay
-    const status = getStatus(arr.map((t) => t.price))
-    coinStatus[symbol] = status
-  } catch (err) {
-    console.error(`Lỗi collectInitialData cho ${symbol}:`, err)
-  }
-}
-
-// ==== Lấy top coins ====
+// ===== Lấy top coin =====
 async function getTopCoins(): Promise<CoinInfo[]> {
-  const { data } = await axios.get(API_URL)
+  const { data } = await axios.get(API_TOP)
   const tokens = data?.data ?? []
   const filtered = tokens.filter((c: any) => c.mulPoint === 4)
   const sorted = filtered.sort(
     (a: any, b: any) => parseFloat(b.volume24h || '0') - parseFloat(a.volume24h || '0'),
   )
-  return sorted.slice(0, maxCoins).map((c: any) => ({
+  return sorted.slice(0, 10).map((c: any) => ({
     symbol: c.symbol,
     alphaId: c.alphaId,
     volume24h: parseFloat(c.volume24h || '0'),
   }))
 }
 
-function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' | 'collecting' {
-  if (arr.length < 2) return 'collecting'
+// ===== Collect initial data từ API =====
+async function collectInitialData(symbol: string, alphaId: string) {
+  try {
+    const url = `https://www.binance.com/bapi/defi/v1/public/alpha-trade/agg-trades?limit=20&symbol=${alphaId.toUpperCase()}USDT`
+    const { data } = await axios.get(url)
+    const trades: any[] = data?.data ?? []
 
-  let countInvalid = 0
-  for (let i = 1; i < arr.length; i++) {
-    const diff = Math.abs((arr[i] - arr[i - 1]) * 1e8)
-    if (diff > 10) countInvalid++
+    const arr: PriceEntry[] = trades.map((t) => ({ price: parseFloat(t.p), diff: null }))
+    for (let i = 1; i < arr.length; i++) arr[i].diff = (arr[i].price - arr[i - 1].price) * 1e8
+
+    priceTracker[symbol] = arr
+    const status = getStatus(arr.map((t) => t.price))
+    coinStatus[symbol] = status
+    stableSince[symbol] = status === 'valid' ? Date.now() : 0
+  } catch (err) {
+    console.error(`Collect data ${symbol} lỗi`, err)
   }
-
-  if (countInvalid === 0) return 'valid'
-  if (countInvalid <= 2) return 'low' // Ổn định thấp
-  return 'invalid'
 }
 
-// ==== Mounted ====
+// ===== Mounted =====
 onMounted(async () => {
   const topCoins = await getTopCoins()
   defaultOrder.value = topCoins.map((c) => c.symbol)
 
-  // Khởi tạo state
-  topCoins.forEach((coin) => {
-    priceTracker[coin.symbol] = []
-    coinStatus[coin.symbol] = 'collecting'
-    flashClass[coin.symbol] = ''
-    alphaToSymbol[`${coin.alphaId.toUpperCase()}USDT`] = coin.symbol
+  topCoins.forEach((c) => {
+    priceTracker[c.symbol] = []
+    coinStatus[c.symbol] = 'low'
+    flashClass[c.symbol] = ''
+    alphaToSymbol[`${c.alphaId.toUpperCase()}USDT`] = c.symbol
+    stableSince[c.symbol] = 0
   })
 
   loading.value = false
 
-  // Collect initial data từ REST API
-  await Promise.all(topCoins.map((coin) => collectInitialData(coin.symbol, coin.alphaId)))
+  await Promise.all(topCoins.map((c) => collectInitialData(c.symbol, c.alphaId)))
 
-  // Mở WebSocket
   const ws = new WebSocket(BINANCE_STREAM)
   ws.onopen = () => {
-    console.log('✅ WebSocket connected')
-    const params = topCoins.map((coin) => `${coin.alphaId.toLowerCase()}usdt@aggTrade`)
+    const params = topCoins.map((c) => `${c.alphaId.toLowerCase()}usdt@aggTrade`)
     ws.send(JSON.stringify({ method: 'SUBSCRIBE', params, id: 1 }))
   }
 
@@ -270,34 +249,38 @@ onMounted(async () => {
 
     const alphaSymbol = res.data.s
     const symbol = alphaToSymbol[alphaSymbol]
-    const price = parseFloat(res.data.p)
     if (!symbol) return
 
+    const price = parseFloat(res.data.p)
     const arr = priceTracker[symbol]
     const prev = arr.length > 0 ? arr[0].price : null
     const diff = prev !== null ? (price - prev) * 1e8 : null
-
     arr.unshift({ price, diff })
-    if (arr.length > maxLength) arr.pop()
+    if (arr.length > MAX_RECORD) arr.pop()
 
-    if (arr.length >= maxLength) {
-      const newStatus = getStatus(arr.map((t) => t.price))
-      const prevState = coinStatus[symbol]
+    const currentStatus = getStatus(arr.map((t) => t.price))
+    const prevState = coinStatus[symbol]
+    const tNow = Date.now()
 
-      if (newStatus === 'valid' && prevState !== 'valid') {
+    if (currentStatus === 'valid') {
+      if (!stableSince[symbol]) stableSince[symbol] = tNow
+      if (tNow - stableSince[symbol] >= 10000 && prevState !== 'valid') {
         coinStatus[symbol] = 'valid'
         playSound('valid')
         flash(symbol, 'valid')
-        showToast(`${symbol} vừa đạt trạng thái ổn định ✅`, 'valid')
-      } else if (newStatus === 'low' && prevState !== 'low') {
+        showToast(`${symbol} vừa đạt trạng thái hợp lệ ✅`, 'valid')
+      }
+    } else {
+      stableSince[symbol] = 0
+      if (currentStatus === 'low' && prevState !== 'low') {
         coinStatus[symbol] = 'low'
         flash(symbol, 'low')
         showToast(`${symbol} đang ổn định thấp ⚠️`, 'valid')
-      } else if (newStatus === 'invalid' && prevState !== 'invalid') {
+      } else if (currentStatus === 'invalid' && prevState !== 'invalid') {
         coinStatus[symbol] = 'invalid'
         playSound('invalid')
         flash(symbol, 'invalid')
-        showToast(`${symbol} vừa mất trạng thái ổn định ❌`, 'invalid')
+        showToast(`${symbol} vừa mất trạng thái hợp lệ ❌`, 'invalid')
       }
     }
   }
@@ -325,7 +308,6 @@ onMounted(async () => {
     transform: scale(1);
   }
 }
-
 @keyframes flashRed {
   0% {
     box-shadow: 0 0 25px rgba(239, 68, 68, 0.8);
@@ -336,7 +318,6 @@ onMounted(async () => {
     transform: scale(1);
   }
 }
-
 @keyframes flashYellow {
   0% {
     box-shadow: 0 0 25px rgba(234, 179, 8, 0.8);
