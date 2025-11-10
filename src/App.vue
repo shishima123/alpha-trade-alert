@@ -1,11 +1,19 @@
 <template>
   <div class="min-h-screen bg-gray-900 p-6 text-gray-200">
-    <!-- Header và checkbox -->
+    <!-- Header -->
     <div class="flex items-center justify-between mb-6 gap-4 flex-wrap">
       <h1 class="text-2xl font-bold flex items-center gap-2">📊 Kiểm tra độ ổn định</h1>
-      <div class="flex items-center gap-2">
-        <input type="checkbox" id="enableSound" v-model="soundEnabled" class="w-4 h-4" />
-        <label for="enableSound">🔊 Nhấn để bật âm thanh</label>
+      <div class="flex items-center gap-4">
+        <button
+          class="px-3 py-1 bg-gray-700 rounded-lg hover:bg-gray-600 transition"
+          @click="showSettings = true"
+        >
+          ⚙️ Cài đặt
+        </button>
+        <div class="flex items-center gap-2">
+          <input type="checkbox" id="enableSound" v-model="soundEnabled" class="w-4 h-4" />
+          <label for="enableSound">🔊 Bật âm thanh</label>
+        </div>
       </div>
     </div>
 
@@ -17,7 +25,7 @@
       <div
         v-for="(symbol, index) in sortedSymbols"
         :key="symbol"
-        class="bg-gray-800 rounded-2xl shadow-md border border-gray-700 transition-all duration-300 p-5"
+        class="coin-card bg-gray-800 rounded-2xl shadow-md border border-gray-700 transition-all duration-300 p-5"
         :class="[
           coinStatus[symbol] === 'valid'
             ? 'ring-4 ring-green-400 shadow-xl scale-[1.02]'
@@ -27,7 +35,6 @@
           flashClass[symbol],
         ]"
       >
-        <!-- Header + badge + thời gian ổn định -->
         <div class="flex items-center justify-between mb-3">
           <h3 class="font-semibold text-lg">{{ symbol }}</h3>
           <div class="flex flex-col items-end">
@@ -53,7 +60,6 @@
           </div>
         </div>
 
-        <!-- Table giá -->
         <div class="overflow-y-auto max-h-[240px]">
           <table class="min-w-full text-sm">
             <thead>
@@ -65,7 +71,7 @@
             </thead>
             <tbody>
               <tr
-                v-for="(item, idx) in priceTracker[symbol].slice(0, maxLength)"
+                v-for="(item, idx) in priceTracker[symbol].slice(0, settings.MAX_RECORD)"
                 :key="idx"
                 class="border-b last:border-0 border-gray-700"
               >
@@ -91,12 +97,76 @@
         </div>
       </div>
     </div>
+
+    <!-- ⚙️ Modal Setting -->
+    <div
+      v-if="showSettings"
+      class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50"
+    >
+      <div class="bg-gray-800 rounded-2xl p-6 w-full max-w-md shadow-lg">
+        <h2 class="text-xl font-semibold mb-4 text-center">⚙️ Cài đặt</h2>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm mb-1">📈 Số bản ghi tối đa</label>
+            <input
+              type="number"
+              v-model.number="settings.MAX_RECORD"
+              class="w-full bg-gray-700 rounded p-2"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">💥 Độ chênh lệch cho phép (×1e8)</label>
+            <input
+              type="number"
+              v-model.number="settings.priceThreshold"
+              class="w-full bg-gray-700 rounded p-2"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">📊 Số điểm biến động tối đa</label>
+            <input
+              type="number"
+              v-model.number="settings.maxInvalid"
+              class="w-full bg-gray-700 rounded p-2"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">⏱️ Thời gian ổn định tối thiểu (ms)</label>
+            <input
+              type="number"
+              v-model.number="settings.stableTime"
+              class="w-full bg-gray-700 rounded p-2"
+            />
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 mt-6">
+          <button
+            class="px-4 py-2 bg-yellow-600 rounded-lg hover:bg-yellow-500"
+            @click="resetSettings"
+          >
+            🔄 Reset mặc định
+          </button>
+          <button
+            class="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
+            @click="showSettings = false"
+          >
+            Đóng
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import axios from 'axios'
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useStorage } from '@vueuse/core'
 import { toast } from 'vue3-toastify'
 import 'vue3-toastify/dist/index.css'
 import validSound from '@/assets/notification.mp3'
@@ -112,10 +182,19 @@ interface PriceEntry {
   diff: number | null
 }
 
+// =================== CONFIG (dùng useStorage) ===================
+const settings = useStorage('stability-settings', {
+  MAX_RECORD: 20,
+  maxInvalid: 2,
+  priceThreshold: 10,
+  stableTime: 10000,
+})
+const showSettings = ref(false)
+
+// =================== CORE STATE ===================
 const BINANCE_STREAM = 'wss://nbstream.binance.com/w3w/wsa/stream'
 const API_TOP =
   'https://www.binance.com/bapi/defi/v1/public/alpha-trade/aggTicker24?dataType=aggregate'
-const MAX_RECORD = 20
 
 const priceTracker = reactive<Record<string, PriceEntry[]>>({})
 const alphaToSymbol = reactive<Record<string, string>>({})
@@ -128,7 +207,6 @@ const soundEnabled = ref(false)
 const now = ref(Date.now())
 const wasValid = reactive<Record<string, boolean>>({})
 
-// Cập nhật thời gian mỗi giây
 setInterval(() => {
   now.value = Date.now()
 }, 1000)
@@ -141,14 +219,12 @@ const sortedSymbols = computed(() => {
   const validArr: string[] = []
   const lowArr: string[] = []
   const invalidArr: string[] = []
-
   defaultOrder.value.forEach((sym) => {
     const status = coinStatus[sym]
     if (status === 'valid') validArr.push(sym)
     else if (status === 'low') lowArr.push(sym)
     else invalidArr.push(sym)
   })
-
   return [...validArr, ...lowArr, ...invalidArr]
 })
 
@@ -178,14 +254,15 @@ function showToast(message: string, type: 'valid' | 'invalid') {
   })
 }
 
+// ===== Logic tính trạng thái =====
 function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' {
   if (arr.length < 2) return 'low'
   let countInvalid = 0
   for (let i = 1; i < arr.length; i++) {
-    if (Math.abs((arr[i] - arr[i - 1]) * 1e8) > 10) countInvalid++
+    if (Math.abs((arr[i] - arr[i - 1]) * 1e8) > settings.value.priceThreshold) countInvalid++
   }
   if (countInvalid === 0) return 'valid'
-  if (countInvalid <= 2) return 'low'
+  if (countInvalid <= settings.value.maxInvalid) return 'low'
   return 'invalid'
 }
 
@@ -204,13 +281,12 @@ async function getTopCoins(): Promise<CoinInfo[]> {
   }))
 }
 
-// ===== Collect initial data từ API =====
+// ===== Collect initial data =====
 async function collectInitialData(symbol: string, alphaId: string) {
   try {
-    const url = `https://www.binance.com/bapi/defi/v1/public/alpha-trade/agg-trades?limit=20&symbol=${alphaId.toUpperCase()}USDT`
+    const url = `https://www.binance.com/bapi/defi/v1/public/alpha-trade/agg-trades?limit=${settings.value.MAX_RECORD}&symbol=${alphaId.toUpperCase()}USDT`
     const { data } = await axios.get(url)
     const trades: any[] = data?.data ?? []
-
     const arr: PriceEntry[] = trades.map((t) => ({ price: parseFloat(t.p), diff: null }))
     for (let i = 1; i < arr.length; i++) arr[i].diff = (arr[i].price - arr[i - 1].price) * 1e8
 
@@ -222,13 +298,24 @@ async function collectInitialData(symbol: string, alphaId: string) {
     console.error(`Collect data ${symbol} lỗi`, err)
   }
 }
+function resetSettings() {
+  settings.value = {
+    MAX_RECORD: 20,
+    maxInvalid: 2,
+    priceThreshold: 10,
+    stableTime: 10000,
+  }
+  toast.info('Đã khôi phục cài đặt mặc định ⚙️', {
+    position: 'bottom-right',
+    autoClose: 2000,
+  })
+}
 
 // ===== Mounted =====
 onMounted(async () => {
   const topCoins = await getTopCoins()
   defaultOrder.value = topCoins.map((c) => c.symbol)
 
-  // Khởi tạo state
   topCoins.forEach((c) => {
     priceTracker[c.symbol] = []
     coinStatus[c.symbol] = 'low'
@@ -239,11 +326,8 @@ onMounted(async () => {
   })
 
   loading.value = false
-
-  // Collect initial data
   await Promise.all(topCoins.map((c) => collectInitialData(c.symbol, c.alphaId)))
 
-  // Mở WebSocket
   const ws = new WebSocket(BINANCE_STREAM)
   ws.onopen = () => {
     const params = topCoins.map((c) => `${c.alphaId.toLowerCase()}usdt@aggTrade`)
@@ -263,7 +347,7 @@ onMounted(async () => {
     const prev = arr.length > 0 ? arr[0].price : null
     const diff = prev !== null ? (price - prev) * 1e8 : null
     arr.unshift({ price, diff })
-    if (arr.length > MAX_RECORD) arr.pop()
+    if (arr.length > settings.value.MAX_RECORD) arr.pop()
 
     const currentStatus = getStatus(arr.map((t) => t.price))
     const prevState = coinStatus[symbol]
@@ -271,29 +355,32 @@ onMounted(async () => {
 
     if (currentStatus === 'valid') {
       if (!stableSince[symbol]) stableSince[symbol] = tNow
-      if (tNow - stableSince[symbol] >= 10000 && prevState !== 'valid') {
+
+      const alreadyHasValid = Object.values(coinStatus).includes('valid')
+
+      if (tNow - stableSince[symbol] >= settings.value.stableTime && prevState !== 'valid') {
         coinStatus[symbol] = 'valid'
-        wasValid[symbol] = true // Lưu trạng thái từng valid
-        playSound('valid')
+        wasValid[symbol] = true
+
+        // ✅ Nếu chưa có coin nào valid thì mới phát âm thanh valid
+        if (!alreadyHasValid) {
+          playSound('valid')
+        }
+
         flash(symbol, 'valid')
-        showToast(`${symbol} vừa đạt trạng thái hợp lệ ✅`, 'valid')
+        showToast(`${symbol} vừa đạt trạng thái ổn định ✅`, 'valid')
       }
     } else {
       stableSince[symbol] = 0
-
       if (currentStatus === 'low' && prevState !== 'low') {
         coinStatus[symbol] = 'low'
-        flash(symbol, 'low')
-        showToast(`${symbol} đang ổn định thấp ⚠️`, 'valid')
       } else if (currentStatus === 'invalid' && prevState !== 'invalid') {
         coinStatus[symbol] = 'invalid'
-        flash(symbol, 'invalid')
-        // Chỉ phát âm thanh nếu coin từng đạt trạng thái valid
         if (wasValid[symbol]) {
           playSound('invalid')
-          showToast(`${symbol} vừa mất trạng thái hợp lệ ❌`, 'invalid')
+          showToast(`${symbol} vừa mất ổn định ❌`, 'invalid')
         }
-        wasValid[symbol] = false // reset trạng thái valid
+        wasValid[symbol] = false
       }
     }
   }
@@ -340,5 +427,12 @@ onMounted(async () => {
     box-shadow: none;
     transform: scale(1);
   }
+}
+.coin-card {
+  border-radius: 1rem;
+  padding: 1.25rem;
+  transition:
+    transform 0.3s ease,
+    box-shadow 0.3s ease;
 }
 </style>
