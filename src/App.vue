@@ -60,7 +60,7 @@
           </div>
         </div>
 
-        <div class="overflow-y-auto max-h-[240px]">
+        <div class="overflow-y-auto max-h-[310px]">
           <table class="min-w-full text-sm">
             <thead>
               <tr class="border-b border-gray-700">
@@ -71,7 +71,7 @@
             </thead>
             <tbody>
               <tr
-                v-for="(item, idx) in priceTracker[symbol].slice(0, settings.MAX_RECORD)"
+                v-for="(item, idx) in priceTracker[symbol]"
                 :key="idx"
                 class="border-b last:border-0 border-gray-700"
               >
@@ -126,7 +126,7 @@
           </div>
 
           <div>
-            <label class="block text-sm mb-1">📊 Số điểm biến động tối đa</label>
+            <label class="block text-sm mb-1">📊 Số bản ghi biến động tối đa</label>
             <input
               type="number"
               v-model.number="settings.maxInvalid"
