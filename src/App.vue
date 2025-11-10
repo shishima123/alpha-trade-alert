@@ -126,6 +126,7 @@ const defaultOrder = ref<string[]>([])
 const loading = ref(true)
 const soundEnabled = ref(false)
 const now = ref(Date.now())
+const wasValid = reactive<Record<string, boolean>>({})
 
 // Cập nhật thời gian mỗi giây
 setInterval(() => {
@@ -222,18 +223,22 @@ onMounted(async () => {
   const topCoins = await getTopCoins()
   defaultOrder.value = topCoins.map((c) => c.symbol)
 
+  // Khởi tạo state
   topCoins.forEach((c) => {
     priceTracker[c.symbol] = []
     coinStatus[c.symbol] = 'low'
     flashClass[c.symbol] = ''
     alphaToSymbol[`${c.alphaId.toUpperCase()}USDT`] = c.symbol
     stableSince[c.symbol] = 0
+    wasValid[c.symbol] = false
   })
 
   loading.value = false
 
+  // Collect initial data
   await Promise.all(topCoins.map((c) => collectInitialData(c.symbol, c.alphaId)))
 
+  // Mở WebSocket
   const ws = new WebSocket(BINANCE_STREAM)
   ws.onopen = () => {
     const params = topCoins.map((c) => `${c.alphaId.toLowerCase()}usdt@aggTrade`)
@@ -263,21 +268,27 @@ onMounted(async () => {
       if (!stableSince[symbol]) stableSince[symbol] = tNow
       if (tNow - stableSince[symbol] >= 10000 && prevState !== 'valid') {
         coinStatus[symbol] = 'valid'
+        wasValid[symbol] = true // Lưu trạng thái từng valid
         playSound('valid')
         flash(symbol, 'valid')
         showToast(`${symbol} vừa đạt trạng thái hợp lệ ✅`, 'valid')
       }
     } else {
       stableSince[symbol] = 0
+
       if (currentStatus === 'low' && prevState !== 'low') {
         coinStatus[symbol] = 'low'
         flash(symbol, 'low')
         showToast(`${symbol} đang ổn định thấp ⚠️`, 'valid')
       } else if (currentStatus === 'invalid' && prevState !== 'invalid') {
         coinStatus[symbol] = 'invalid'
-        playSound('invalid')
         flash(symbol, 'invalid')
-        showToast(`${symbol} vừa mất trạng thái hợp lệ ❌`, 'invalid')
+        // Chỉ phát âm thanh nếu coin từng đạt trạng thái valid
+        if (wasValid[symbol]) {
+          playSound('invalid')
+          showToast(`${symbol} vừa mất trạng thái hợp lệ ❌`, 'invalid')
+        }
+        wasValid[symbol] = false // reset trạng thái valid
       }
     }
   }
