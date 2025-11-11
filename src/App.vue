@@ -165,7 +165,7 @@
 
 <script setup lang="ts">
 import axios from 'axios'
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { toast } from 'vue3-toastify'
 import 'vue3-toastify/dist/index.css'
@@ -177,7 +177,7 @@ interface PriceEntry {
   diff: number | null
 }
 
-// =================== CONFIG (dùng useStorage) ===================
+// =================== ⚙️ SETTINGS ===================
 const settings = useStorage('stability-settings', {
   MAX_RECORD: 20,
   maxInvalid: 2,
@@ -185,159 +185,199 @@ const settings = useStorage('stability-settings', {
   stableTime: 10000,
 })
 const showSettings = ref(false)
+const soundEnabled = ref(false)
+const loading = ref(true)
+const now = ref(Date.now())
 
-// =================== CORE STATE ===================
-const BINANCE_STREAM = 'wss://nbstream.binance.com/w3w/wsa/stream'
-const API_TOP =
-  'https://www.binance.com/bapi/defi/v1/public/alpha-trade/aggTicker24?dataType=aggregate'
-
+// =================== 📊 CORE STATE ===================
 const priceTracker = reactive<Record<string, PriceEntry[]>>({})
-const alphaToSymbol = reactive<Record<string, string>>({})
 const coinStatus = reactive<Record<string, 'valid' | 'low' | 'invalid'>>({})
 const flashClass = reactive<Record<string, string>>({})
 const stableSince = reactive<Record<string, number>>({})
 const wasValid = reactive<Record<string, boolean>>({})
-const loading = ref(true)
-const soundEnabled = ref(false)
-const now = ref(Date.now())
+const alphaToSymbol: Record<string, string> = {}
 
-setInterval(() => (now.value = Date.now()), 1000)
-const validAudio = new Audio(validSound)
-const invalidAudio = new Audio(invalidSound)
+const BINANCE_STREAM = 'wss://nbstream.binance.com/w3w/wsa/stream'
+const API_TOP =
+  'https://www.binance.com/bapi/defi/v1/public/alpha-trade/aggTicker24?dataType=aggregate'
 
-// ===== Sorted: valid > low > invalid =====
-const sortedSymbols = computed(() => {
-  const validArr: string[] = []
-  const lowArr: string[] = []
-  const invalidArr: string[] = []
-  for (const sym in coinStatus) {
-    const s = coinStatus[sym]
-    if (s === 'valid') validArr.push(sym)
-    else if (s === 'low') lowArr.push(sym)
-    else if (wasValid[sym]) invalidArr.unshift(sym)
-    else invalidArr.push(sym)
-  }
-  return [...validArr, ...lowArr, ...invalidArr]
-})
+let ws: WebSocket | null = null
+let clockInterval: number | null = null
+const debounceTimers: Record<string, number> = {}
 
-// ===== Helper =====
+// =================== ⏱️ UPDATE CLOCK ===================
+clockInterval = window.setInterval(() => (now.value = Date.now()), 1000)
+
+// =================== 🔊 SOUND ===================
+const audioMap = {
+  valid: new Audio(validSound),
+  invalid: new Audio(invalidSound),
+}
 function playSound(type: 'valid' | 'invalid') {
   if (!soundEnabled.value) return
-  const audio = type === 'valid' ? validAudio : invalidAudio
+  const audio = audioMap[type]
   audio.currentTime = 0
   audio.play().catch(() => {})
 }
 
+// =================== 🧮 STATUS CALC ===================
+function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' {
+  if (arr.length < 2) return 'low'
+  let invalids = 0
+  const threshold = settings.value.priceThreshold
+  const limit = settings.value.maxInvalid
+  for (let i = 1; i < arr.length; i++) {
+    if (Math.abs((arr[i] - arr[i - 1]) * 1e8) > threshold) invalids++
+  }
+  if (invalids === 0) return 'valid'
+  if (invalids <= limit) return 'low'
+  return 'invalid'
+}
+
+// =================== 🔔 NOTIFY & FLASH ===================
 function flash(symbol: string, type: 'valid' | 'low' | 'invalid') {
   flashClass[symbol] =
     type === 'valid' ? 'flash-green' : type === 'low' ? 'flash-yellow' : 'flash-red'
-  setTimeout(() => (flashClass[symbol] = ''), 400)
+  setTimeout(() => (flashClass[symbol] = ''), 300)
 }
 function notify(symbol: string, type: 'valid' | 'invalid') {
   playSound(type)
   toast[type === 'valid' ? 'success' : 'error'](
     `${symbol} ${type === 'valid' ? 'ổn định ✅' : 'mất ổn định ❌'}`,
-    { position: 'bottom-right', autoClose: 2000 },
+    { position: 'bottom-right', autoClose: 1500 },
   )
 }
 
-function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' {
-  if (arr.length < 2) return 'low'
-  let countInvalid = 0
-  for (let i = 1; i < arr.length; i++) {
-    if (Math.abs((arr[i] - arr[i - 1]) * 1e8) > settings.value.priceThreshold) countInvalid++
+// =================== 🧠 STATUS SORTING ===================
+const sortedSymbols = computed(() => {
+  const valid: string[] = []
+  const low: string[] = []
+  const invalid: string[] = []
+  for (const s in coinStatus) {
+    const st = coinStatus[s]
+    if (st === 'valid') valid.push(s)
+    else if (st === 'low') low.push(s)
+    else invalid.push(s)
   }
-  if (countInvalid === 0) return 'valid'
-  if (countInvalid <= settings.value.maxInvalid) return 'low'
-  return 'invalid'
-}
+  // coin nào vừa rớt thì lên đầu invalid
+  invalid.sort((a, b) => (wasValid[b] && !wasValid[a] ? 1 : wasValid[a] && !wasValid[b] ? -1 : 0))
+  return [...valid, ...low, ...invalid]
+})
 
+// =================== 📈 FETCH INIT DATA ===================
 async function getTopCoins() {
   const { data } = await axios.get(API_TOP)
   return (data?.data ?? [])
     .filter((c: any) => c.mulPoint === 4)
     .sort((a: any, b: any) => b.volume24h - a.volume24h)
     .slice(0, 10)
-    .map((c: any) => ({ symbol: c.symbol, alphaId: c.alphaId }))
+    .map((c: any) => ({ symbol: c.symbol, alphaId: c.alphaId.toUpperCase() }))
 }
 
 async function collectInitialData(symbol: string, alphaId: string) {
   try {
-    const url = `https://www.binance.com/bapi/defi/v1/public/alpha-trade/agg-trades?limit=${settings.value.MAX_RECORD}&symbol=${alphaId.toUpperCase()}USDT`
+    const url = `https://www.binance.com/bapi/defi/v1/public/alpha-trade/agg-trades?limit=${settings.value.MAX_RECORD}&symbol=${alphaId}USDT`
     const { data } = await axios.get(url)
-    const trades: any[] = data?.data ?? []
-    const arr: PriceEntry[] = trades.map((t) => ({ price: parseFloat(t.p), diff: null }))
-    for (let i = 1; i < arr.length; i++) arr[i].diff = (arr[i].price - arr[i - 1].price) * 1e8
-    priceTracker[symbol] = arr
-    const status = getStatus(arr.map((t) => t.price))
-    coinStatus[symbol] = status
-    stableSince[symbol] = status === 'valid' ? Date.now() : 0
-  } catch (e) {
-    console.error(`Collect ${symbol} error`, e)
+    const trades = (data?.data ?? []).map((t: any) => parseFloat(t.p))
+    const entries: PriceEntry[] = trades.map((p, i) => ({
+      price: p,
+      diff: i === 0 ? null : (p - trades[i - 1]) * 1e8,
+    }))
+    priceTracker[symbol] = entries
+    const st = getStatus(trades)
+    coinStatus[symbol] = st
+    stableSince[symbol] = st === 'valid' ? Date.now() : 0
+  } catch (err) {
+    console.error('collectInitialData error', symbol, err)
   }
 }
 
-function resetSettings() {
-  settings.value = { MAX_RECORD: 20, maxInvalid: 2, priceThreshold: 10, stableTime: 10000 }
-  toast.info('Đã khôi phục cài đặt mặc định ⚙️', { position: 'bottom-right', autoClose: 2000 })
+// =================== ♻️ UPDATE EACH TICK ===================
+function handlePriceUpdate(symbol: string, price: number) {
+  const arr = priceTracker[symbol]
+  const prev = arr[0]?.price
+  const diff = prev != null ? (price - prev) * 1e8 : null
+  arr.unshift({ price, diff })
+  if (arr.length > settings.value.MAX_RECORD) arr.length = settings.value.MAX_RECORD
+
+  const prices = arr.map((x) => x.price)
+  const newStatus = getStatus(prices)
+  const oldStatus = coinStatus[symbol]
+  if (newStatus === oldStatus) return
+
+  const t = Date.now()
+  if (newStatus === 'valid') {
+    if (!stableSince[symbol]) stableSince[symbol] = t
+    if (t - stableSince[symbol] >= settings.value.stableTime) {
+      coinStatus[symbol] = 'valid'
+      wasValid[symbol] = true
+      flash(symbol, 'valid')
+      notify(symbol, 'valid')
+    }
+  } else {
+    stableSince[symbol] = 0
+    coinStatus[symbol] = newStatus
+    if (newStatus === 'invalid' && wasValid[symbol]) {
+      wasValid[symbol] = false
+      flash(symbol, 'invalid')
+      notify(symbol, 'invalid')
+    }
+  }
 }
 
+// =================== 🧩 RESET SETTINGS ===================
+function resetSettings() {
+  settings.value = { MAX_RECORD: 20, maxInvalid: 2, priceThreshold: 10, stableTime: 10000 }
+  toast.info('⚙️ Đã khôi phục cài đặt mặc định', { position: 'bottom-right', autoClose: 1500 })
+}
+
+// =================== 🚀 INIT ===================
 onMounted(async () => {
   const topCoins = await getTopCoins()
+
   for (const c of topCoins) {
     priceTracker[c.symbol] = []
     coinStatus[c.symbol] = 'low'
     flashClass[c.symbol] = ''
-    alphaToSymbol[`${c.alphaId.toUpperCase()}USDT`] = c.symbol
     stableSince[c.symbol] = 0
     wasValid[c.symbol] = false
+    alphaToSymbol[`${c.alphaId}USDT`] = c.symbol
   }
-  loading.value = false
-  await Promise.all(topCoins.map((c) => collectInitialData(c.symbol, c.alphaId)))
 
-  const ws = new WebSocket(BINANCE_STREAM)
+  await Promise.all(topCoins.map((c) => collectInitialData(c.symbol, c.alphaId)))
+  loading.value = false
+
+  // ==== WebSocket init ====
+  ws = new WebSocket(BINANCE_STREAM)
   ws.onopen = () => {
     const params = topCoins.map((c) => `${c.alphaId.toLowerCase()}usdt@aggTrade`)
-    ws.send(JSON.stringify({ method: 'SUBSCRIBE', params, id: 1 }))
+    ws?.send(JSON.stringify({ method: 'SUBSCRIBE', params, id: 1 }))
   }
 
   ws.onmessage = (e) => {
     const res = JSON.parse(e.data)
-    if (!res.data || res.data.e !== 'aggTrade') return
-    const alphaSymbol = res.data.s
-    const symbol = alphaToSymbol[alphaSymbol]
+    const d = res?.data
+    if (!d || d.e !== 'aggTrade') return
+    const symbol = alphaToSymbol[d.s]
     if (!symbol) return
+    const price = parseFloat(d.p)
 
-    const price = parseFloat(res.data.p)
-    const arr = priceTracker[symbol]
-    const diff = arr[0] ? (price - arr[0].price) * 1e8 : null
-    arr.unshift({ price, diff })
-    if (arr.length > settings.value.MAX_RECORD) arr.pop()
-
-    const status = getStatus(arr.map((t) => t.price))
-    const prev = coinStatus[symbol]
-    const tNow = Date.now()
-
-    if (status === 'valid') {
-      if (!stableSince[symbol]) stableSince[symbol] = tNow
-      if (tNow - stableSince[symbol] >= settings.value.stableTime && prev !== 'valid') {
-        coinStatus[symbol] = 'valid'
-        wasValid[symbol] = true
-        flash(symbol, 'valid')
-        notify(symbol, 'valid')
-      }
-    } else {
-      stableSince[symbol] = 0
-      if (status !== prev) {
-        coinStatus[symbol] = status
-        if (status === 'invalid' && wasValid[symbol]) {
-          wasValid[symbol] = false
-          flash(symbol, 'invalid')
-          notify(symbol, 'invalid')
-        }
-      }
-    }
+    // batch update mỗi 200ms/coin
+    clearTimeout(debounceTimers[symbol])
+    debounceTimers[symbol] = window.setTimeout(() => {
+      handlePriceUpdate(symbol, price)
+    }, 200)
   }
+})
+
+// =================== 🧹 CLEANUP ===================
+onBeforeUnmount(() => {
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+  if (clockInterval) clearInterval(clockInterval)
+  Object.values(debounceTimers).forEach((t) => clearTimeout(t))
 })
 </script>
 
