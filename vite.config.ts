@@ -14,7 +14,6 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'robots.txt', 'apple-touch-icon.png'],
       manifest: {
         name: 'Alpha Stability Checker',
         short_name: 'CryptoCheck',
@@ -22,8 +21,6 @@ export default defineConfig({
         theme_color: '#111827', // màu dark mode
         background_color: '#111827',
         display: 'standalone',
-        scope: '/',
-        start_url: '/',
         icons: [
           {
             src: './assets/img/icons/windows11/SmallTile.scale-100.png',
