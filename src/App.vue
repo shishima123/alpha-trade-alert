@@ -172,11 +172,6 @@ import 'vue3-toastify/dist/index.css'
 import validSound from '@/assets/notification.mp3'
 import invalidSound from '@/assets/alert.mp3'
 
-interface CoinInfo {
-  symbol: string
-  alphaId: string
-  volume24h: number
-}
 interface PriceEntry {
   price: number
   diff: number | null
@@ -201,16 +196,12 @@ const alphaToSymbol = reactive<Record<string, string>>({})
 const coinStatus = reactive<Record<string, 'valid' | 'low' | 'invalid'>>({})
 const flashClass = reactive<Record<string, string>>({})
 const stableSince = reactive<Record<string, number>>({})
-const defaultOrder = ref<string[]>([])
+const wasValid = reactive<Record<string, boolean>>({})
 const loading = ref(true)
 const soundEnabled = ref(false)
 const now = ref(Date.now())
-const wasValid = reactive<Record<string, boolean>>({})
 
-setInterval(() => {
-  now.value = Date.now()
-}, 1000)
-
+setInterval(() => (now.value = Date.now()), 1000)
 const validAudio = new Audio(validSound)
 const invalidAudio = new Audio(invalidSound)
 
@@ -219,12 +210,13 @@ const sortedSymbols = computed(() => {
   const validArr: string[] = []
   const lowArr: string[] = []
   const invalidArr: string[] = []
-  defaultOrder.value.forEach((sym) => {
-    const status = coinStatus[sym]
-    if (status === 'valid') validArr.push(sym)
-    else if (status === 'low') lowArr.push(sym)
+  for (const sym in coinStatus) {
+    const s = coinStatus[sym]
+    if (s === 'valid') validArr.push(sym)
+    else if (s === 'low') lowArr.push(sym)
+    else if (wasValid[sym]) invalidArr.unshift(sym)
     else invalidArr.push(sym)
-  })
+  }
   return [...validArr, ...lowArr, ...invalidArr]
 })
 
@@ -239,22 +231,16 @@ function playSound(type: 'valid' | 'invalid') {
 function flash(symbol: string, type: 'valid' | 'low' | 'invalid') {
   flashClass[symbol] =
     type === 'valid' ? 'flash-green' : type === 'low' ? 'flash-yellow' : 'flash-red'
-  setTimeout(() => {
-    flashClass[symbol] = ''
-  }, 400)
+  setTimeout(() => (flashClass[symbol] = ''), 400)
+}
+function notify(symbol: string, type: 'valid' | 'invalid') {
+  playSound(type)
+  toast[type === 'valid' ? 'success' : 'error'](
+    `${symbol} ${type === 'valid' ? 'ổn định ✅' : 'mất ổn định ❌'}`,
+    { position: 'bottom-right', autoClose: 2000 },
+  )
 }
 
-function showToast(message: string, type: 'valid' | 'invalid') {
-  toast[type === 'valid' ? 'success' : 'error'](message, {
-    position: 'bottom-right',
-    autoClose: 2000,
-    hideProgressBar: false,
-    closeOnClick: true,
-    pauseOnHover: true,
-  })
-}
-
-// ===== Logic tính trạng thái =====
 function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' {
   if (arr.length < 2) return 'low'
   let countInvalid = 0
@@ -266,22 +252,15 @@ function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' {
   return 'invalid'
 }
 
-// ===== Lấy top coin =====
-async function getTopCoins(): Promise<CoinInfo[]> {
+async function getTopCoins() {
   const { data } = await axios.get(API_TOP)
-  const tokens = data?.data ?? []
-  const filtered = tokens.filter((c: any) => c.mulPoint === 4)
-  const sorted = filtered.sort(
-    (a: any, b: any) => parseFloat(b.volume24h || '0') - parseFloat(a.volume24h || '0'),
-  )
-  return sorted.slice(0, 10).map((c: any) => ({
-    symbol: c.symbol,
-    alphaId: c.alphaId,
-    volume24h: parseFloat(c.volume24h || '0'),
-  }))
+  return (data?.data ?? [])
+    .filter((c: any) => c.mulPoint === 4)
+    .sort((a: any, b: any) => b.volume24h - a.volume24h)
+    .slice(0, 10)
+    .map((c: any) => ({ symbol: c.symbol, alphaId: c.alphaId }))
 }
 
-// ===== Collect initial data =====
 async function collectInitialData(symbol: string, alphaId: string) {
   try {
     const url = `https://www.binance.com/bapi/defi/v1/public/alpha-trade/agg-trades?limit=${settings.value.MAX_RECORD}&symbol=${alphaId.toUpperCase()}USDT`
@@ -289,42 +268,30 @@ async function collectInitialData(symbol: string, alphaId: string) {
     const trades: any[] = data?.data ?? []
     const arr: PriceEntry[] = trades.map((t) => ({ price: parseFloat(t.p), diff: null }))
     for (let i = 1; i < arr.length; i++) arr[i].diff = (arr[i].price - arr[i - 1].price) * 1e8
-
     priceTracker[symbol] = arr
     const status = getStatus(arr.map((t) => t.price))
     coinStatus[symbol] = status
     stableSince[symbol] = status === 'valid' ? Date.now() : 0
-  } catch (err) {
-    console.error(`Collect data ${symbol} lỗi`, err)
+  } catch (e) {
+    console.error(`Collect ${symbol} error`, e)
   }
-}
-function resetSettings() {
-  settings.value = {
-    MAX_RECORD: 20,
-    maxInvalid: 2,
-    priceThreshold: 10,
-    stableTime: 10000,
-  }
-  toast.info('Đã khôi phục cài đặt mặc định ⚙️', {
-    position: 'bottom-right',
-    autoClose: 2000,
-  })
 }
 
-// ===== Mounted =====
+function resetSettings() {
+  settings.value = { MAX_RECORD: 20, maxInvalid: 2, priceThreshold: 10, stableTime: 10000 }
+  toast.info('Đã khôi phục cài đặt mặc định ⚙️', { position: 'bottom-right', autoClose: 2000 })
+}
+
 onMounted(async () => {
   const topCoins = await getTopCoins()
-  defaultOrder.value = topCoins.map((c) => c.symbol)
-
-  topCoins.forEach((c) => {
+  for (const c of topCoins) {
     priceTracker[c.symbol] = []
     coinStatus[c.symbol] = 'low'
     flashClass[c.symbol] = ''
     alphaToSymbol[`${c.alphaId.toUpperCase()}USDT`] = c.symbol
     stableSince[c.symbol] = 0
     wasValid[c.symbol] = false
-  })
-
+  }
   loading.value = false
   await Promise.all(topCoins.map((c) => collectInitialData(c.symbol, c.alphaId)))
 
@@ -334,53 +301,40 @@ onMounted(async () => {
     ws.send(JSON.stringify({ method: 'SUBSCRIBE', params, id: 1 }))
   }
 
-  ws.onmessage = (event) => {
-    const res = JSON.parse(event.data)
+  ws.onmessage = (e) => {
+    const res = JSON.parse(e.data)
     if (!res.data || res.data.e !== 'aggTrade') return
-
     const alphaSymbol = res.data.s
     const symbol = alphaToSymbol[alphaSymbol]
     if (!symbol) return
 
     const price = parseFloat(res.data.p)
     const arr = priceTracker[symbol]
-    const prev = arr.length > 0 ? arr[0].price : null
-    const diff = prev !== null ? (price - prev) * 1e8 : null
+    const diff = arr[0] ? (price - arr[0].price) * 1e8 : null
     arr.unshift({ price, diff })
     if (arr.length > settings.value.MAX_RECORD) arr.pop()
 
-    const currentStatus = getStatus(arr.map((t) => t.price))
-    const prevState = coinStatus[symbol]
+    const status = getStatus(arr.map((t) => t.price))
+    const prev = coinStatus[symbol]
     const tNow = Date.now()
 
-    if (currentStatus === 'valid') {
+    if (status === 'valid') {
       if (!stableSince[symbol]) stableSince[symbol] = tNow
-
-      const alreadyHasValid = Object.values(coinStatus).includes('valid')
-
-      if (tNow - stableSince[symbol] >= settings.value.stableTime && prevState !== 'valid') {
+      if (tNow - stableSince[symbol] >= settings.value.stableTime && prev !== 'valid') {
         coinStatus[symbol] = 'valid'
         wasValid[symbol] = true
-
-        // ✅ Nếu chưa có coin nào valid thì mới phát âm thanh valid
-        if (!alreadyHasValid) {
-          playSound('valid')
-        }
-
         flash(symbol, 'valid')
-        showToast(`${symbol} vừa đạt trạng thái ổn định ✅`, 'valid')
+        notify(symbol, 'valid')
       }
     } else {
       stableSince[symbol] = 0
-      if (currentStatus === 'low' && prevState !== 'low') {
-        coinStatus[symbol] = 'low'
-      } else if (currentStatus === 'invalid' && prevState !== 'invalid') {
-        coinStatus[symbol] = 'invalid'
-        if (wasValid[symbol]) {
-          playSound('invalid')
-          showToast(`${symbol} vừa mất ổn định ❌`, 'invalid')
+      if (status !== prev) {
+        coinStatus[symbol] = status
+        if (status === 'invalid' && wasValid[symbol]) {
+          wasValid[symbol] = false
+          flash(symbol, 'invalid')
+          notify(symbol, 'invalid')
         }
-        wasValid[symbol] = false
       }
     }
   }
