@@ -36,7 +36,14 @@
         ]"
       >
         <div class="flex items-center justify-between mb-3">
-          <h3 class="font-semibold text-lg">{{ symbol }}</h3>
+          <div>
+            <h3 class="font-semibold text-lg">{{ symbol }}</h3>
+            <!-- 👇 thêm dòng này ngay bên dưới -->
+            <span class="text-xs text-blue-400 block mb-3">
+              (x4: {{ getDaysLeft(symbol) }} ngày)
+            </span>
+          </div>
+
           <div class="flex flex-col items-end">
             <span
               class="text-sm font-medium px-2 py-1 rounded-full"
@@ -54,19 +61,20 @@
                     : 'Không ổn định'
               }}
             </span>
+
             <span v-if="coinStatus[symbol] === 'valid'" class="text-xs text-gray-400 mt-1">
               Đã ổn định: {{ Math.floor((now - stableSince[symbol]) / 1000) }}s
             </span>
           </div>
         </div>
 
-        <div class="overflow-y-auto max-h-[310px]">
+        <div class="custom-scroll overflow-y-auto max-h-[310px]">
           <table class="min-w-full text-sm">
             <thead>
               <tr class="border-b border-gray-700">
-                <th class="text-left py-1 font-medium">#</th>
-                <th class="text-left py-1 font-medium">Giá</th>
-                <th class="text-left py-1 font-medium">Δ</th>
+                <th class="text-left py-1 font-medium w-[15%]">#</th>
+                <th class="text-left py-1 font-medium w-[55%]">Giá</th>
+                <th class="text-left py-1 font-medium w-[30%]">Δ</th>
               </tr>
             </thead>
             <tbody>
@@ -196,6 +204,7 @@ const flashClass = reactive<Record<string, string>>({})
 const stableSince = reactive<Record<string, number>>({})
 const wasValid = reactive<Record<string, boolean>>({})
 const alphaToSymbol: Record<string, string> = {}
+const listingTimes: Record<string, number> = {} // ⏱️ lưu ngày list
 
 const BINANCE_STREAM = 'wss://nbstream.binance.com/w3w/wsa/stream'
 const API_TOP =
@@ -234,6 +243,15 @@ function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' {
   return 'invalid'
 }
 
+// ⏳ Tính ngày còn lại x4
+function getDaysLeft(symbol: string): number | null {
+  const t = listingTimes[symbol]
+  if (!t) return null
+  const end = t + 30 * 24 * 60 * 60 * 1000
+  const remaining = Math.floor((end - now.value) / (24 * 60 * 60 * 1000))
+  return remaining < 0 ? 0 : remaining
+}
+
 // =================== 🔔 NOTIFY & FLASH ===================
 function flash(symbol: string, type: 'valid' | 'low' | 'invalid') {
   flashClass[symbol] =
@@ -259,7 +277,6 @@ const sortedSymbols = computed(() => {
     else if (st === 'low') low.push(s)
     else invalid.push(s)
   }
-  // coin nào vừa rớt thì lên đầu invalid
   invalid.sort((a, b) => (wasValid[b] && !wasValid[a] ? 1 : wasValid[a] && !wasValid[b] ? -1 : 0))
   return [...valid, ...low, ...invalid]
 })
@@ -271,7 +288,11 @@ async function getTopCoins() {
     .filter((c: any) => c.mulPoint === 4)
     .sort((a: any, b: any) => b.volume24h - a.volume24h)
     .slice(0, 10)
-    .map((c: any) => ({ symbol: c.symbol, alphaId: c.alphaId.toUpperCase() }))
+    .map((c: any) => ({
+      symbol: c.symbol,
+      alphaId: c.alphaId.toUpperCase(),
+      listingTime: c.listingTime,
+    }))
 }
 
 async function collectInitialData(symbol: string, alphaId: string) {
@@ -342,12 +363,12 @@ onMounted(async () => {
     stableSince[c.symbol] = 0
     wasValid[c.symbol] = false
     alphaToSymbol[`${c.alphaId}USDT`] = c.symbol
+    listingTimes[c.symbol] = c.listingTime // ⏱️ gán thời gian list
   }
 
   await Promise.all(topCoins.map((c) => collectInitialData(c.symbol, c.alphaId)))
   loading.value = false
 
-  // ==== WebSocket init ====
   ws = new WebSocket(BINANCE_STREAM)
   ws.onopen = () => {
     const params = topCoins.map((c) => `${c.alphaId.toLowerCase()}usdt@aggTrade`)
@@ -362,7 +383,6 @@ onMounted(async () => {
     if (!symbol) return
     const price = parseFloat(d.p)
 
-    // batch update mỗi 200ms/coin
     clearTimeout(debounceTimers[symbol])
     debounceTimers[symbol] = window.setTimeout(() => {
       handlePriceUpdate(symbol, price)
@@ -428,5 +448,76 @@ onBeforeUnmount(() => {
   transition:
     transform 0.3s ease,
     box-shadow 0.3s ease;
+}
+table {
+  width: 100%;
+  table-layout: fixed;
+}
+td,
+th {
+  white-space: nowrap;
+}
+</style>
+
+<style>
+/* Chrome/Edge/Safari */
+.custom-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease;
+}
+
+/* Hiệu ứng hover cho Firefox */
+.custom-scroll:hover {
+  scrollbar-color: rgba(125, 125, 125, 0.6) transparent;
+}
+
+.custom-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+/* Track trong suốt */
+.custom-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Thumb (phần thanh cuộn chính) */
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  transition:
+    background 0.3s ease,
+    opacity 0.3s ease;
+}
+
+/* Hover: hiện thanh cuộn */
+.custom-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(125, 125, 125, 0.6);
+}
+.custom-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(125, 125, 125, 0.8);
+}
+
+/* 🚫 Ẩn hoàn toàn mũi tên hai đầu */
+.custom-scroll::-webkit-scrollbar-button {
+  width: 0;
+  height: 0;
+  display: none;
+  -webkit-appearance: none;
+  background: none;
+  content: none;
+}
+
+/* Safari đặc biệt đôi khi vẫn hiển thị — fix thêm */
+.custom-scroll::-webkit-scrollbar-button:start:decrement,
+.custom-scroll::-webkit-scrollbar-button:end:increment {
+  display: none;
+  width: 0;
+  height: 0;
+  -webkit-appearance: none;
+  background: none;
+  content: none;
 }
 </style>
