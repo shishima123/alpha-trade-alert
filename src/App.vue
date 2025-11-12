@@ -445,45 +445,58 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.flash-green {
-  animation: flashGreen 0.4s ease-in-out;
+/* 💫 Flash khi đổi trạng thái */
+@keyframes smoothValid {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(34, 197, 94, 0);
+  }
+  40% {
+    transform: scale(1.04);
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: none;
+  }
 }
-.flash-red {
-  animation: flashRed 0.4s ease-in-out;
+@keyframes smoothInvalid {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(239, 68, 68, 0);
+  }
+  40% {
+    transform: scale(1.04);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: none;
+  }
 }
-.flash-yellow {
-  animation: flashYellow 0.4s ease-in-out;
+@keyframes smoothLow {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(234, 179, 8, 0);
+  }
+  40% {
+    transform: scale(1.03);
+    box-shadow: 0 0 15px rgba(234, 179, 8, 0.5);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: none;
+  }
 }
 
-@keyframes flashGreen {
-  0% {
-    box-shadow: 0 0 25px rgba(34, 197, 94, 0.8);
-    transform: scale(1.05);
-  }
-  100% {
-    box-shadow: none;
-    transform: scale(1);
-  }
+.flash-green {
+  animation: smoothValid 0.8s ease-out;
 }
-@keyframes flashRed {
-  0% {
-    box-shadow: 0 0 25px rgba(239, 68, 68, 0.8);
-    transform: scale(1.05);
-  }
-  100% {
-    box-shadow: none;
-    transform: scale(1);
-  }
+.flash-red {
+  animation: smoothInvalid 0.8s ease-out;
 }
-@keyframes flashYellow {
-  0% {
-    box-shadow: 0 0 25px rgba(234, 179, 8, 0.8);
-    transform: scale(1.05);
-  }
-  100% {
-    box-shadow: none;
-    transform: scale(1);
-  }
+.flash-yellow {
+  animation: smoothLow 0.8s ease-out;
 }
 .coin-card {
   border-radius: 1rem;
