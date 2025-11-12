@@ -342,27 +342,25 @@ function handlePriceUpdate(symbol: string, price: number) {
   const t = Date.now()
 
   if (newStatus === 'valid') {
-    if (newStatus === 'valid') {
-      if (!stableSince[symbol]) stableSince[symbol] = t
-      if (t - stableSince[symbol] >= settings.value.stableTime) {
-        // Kiểm tra trước khi đổi trạng thái
-        const anyOtherValid = Object.entries(coinStatus).some(
-          ([s, st]) => s !== symbol && st === 'valid',
-        )
+    if (!stableSince[symbol]) stableSince[symbol] = t
+    if (t - stableSince[symbol] >= settings.value.stableTime) {
+      // Kiểm tra trước khi đổi trạng thái
+      const anyOtherValid = Object.entries(coinStatus).some(
+        ([s, st]) => s !== symbol && st === 'valid',
+      )
 
-        // Chưa có coin nào valid → phát âm thanh
-        if (!anyOtherValid) playSound('valid')
+      // Chưa có coin nào valid → phát âm thanh
+      if (!anyOtherValid) playSound('valid')
 
-        coinStatus[symbol] = 'valid'
-        removeItem(invalidOrder.value, symbol)
+      coinStatus[symbol] = 'valid'
+      removeItem(invalidOrder.value, symbol)
 
-        wasValid[symbol] = true
-        flash(symbol, 'valid')
-        toast.success(`${symbol} ổn định ✅`, {
-          position: 'bottom-right',
-          autoClose: 1500,
-        })
-      }
+      wasValid[symbol] = true
+      flash(symbol, 'valid')
+      toast.success(`${symbol} ổn định ✅`, {
+        position: 'bottom-right',
+        autoClose: 1500,
+      })
     }
 
     // Nếu chưa đủ thời gian ổn định thì KHÔNG đổi state, cũng không đụng invalidOrder
