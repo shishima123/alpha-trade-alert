@@ -259,26 +259,39 @@ function flash(symbol: string, type: 'valid' | 'low' | 'invalid') {
   setTimeout(() => (flashClass[symbol] = ''), 300)
 }
 function notify(symbol: string, type: 'valid' | 'invalid') {
-  playSound(type)
+  if (type === 'invalid') playSound('invalid')
   toast[type === 'valid' ? 'success' : 'error'](
     `${symbol} ${type === 'valid' ? 'ổn định ✅' : 'mất ổn định ❌'}`,
     { position: 'bottom-right', autoClose: 1500 },
   )
 }
 
+// =================== 🧭 INVALID ORDER STATE ===================
+const invalidOrder = ref<string[]>([])
+
+function pushFrontUnique(arr: string[], s: string) {
+  const i = arr.indexOf(s)
+  if (i !== -1) arr.splice(i, 1)
+  arr.unshift(s)
+}
+function removeItem(arr: string[], s: string) {
+  const i = arr.indexOf(s)
+  if (i !== -1) arr.splice(i, 1)
+}
+
 // =================== 🧠 STATUS SORTING ===================
 const sortedSymbols = computed(() => {
   const valid: string[] = []
   const low: string[] = []
-  const invalid: string[] = []
+
   for (const s in coinStatus) {
     const st = coinStatus[s]
     if (st === 'valid') valid.push(s)
     else if (st === 'low') low.push(s)
-    else invalid.push(s)
+    // nhóm invalid KHÔNG sort ở đây, dùng invalidOrder để giữ thứ tự ổn định
   }
-  invalid.sort((a, b) => (wasValid[b] && !wasValid[a] ? 1 : wasValid[a] && !wasValid[b] ? -1 : 0))
-  return [...valid, ...low, ...invalid]
+
+  return [...valid, ...low, ...invalidOrder.value]
 })
 
 // =================== 📈 FETCH INIT DATA ===================
@@ -327,21 +340,49 @@ function handlePriceUpdate(symbol: string, price: number) {
   if (newStatus === oldStatus) return
 
   const t = Date.now()
+
   if (newStatus === 'valid') {
-    if (!stableSince[symbol]) stableSince[symbol] = t
-    if (t - stableSince[symbol] >= settings.value.stableTime) {
-      coinStatus[symbol] = 'valid'
-      wasValid[symbol] = true
-      flash(symbol, 'valid')
-      notify(symbol, 'valid')
+    if (newStatus === 'valid') {
+      if (!stableSince[symbol]) stableSince[symbol] = t
+      if (t - stableSince[symbol] >= settings.value.stableTime) {
+        // Kiểm tra trước khi đổi trạng thái
+        const anyOtherValid = Object.entries(coinStatus).some(
+          ([s, st]) => s !== symbol && st === 'valid',
+        )
+
+        // Chưa có coin nào valid → phát âm thanh
+        if (!anyOtherValid) playSound('valid')
+
+        coinStatus[symbol] = 'valid'
+        removeItem(invalidOrder.value, symbol)
+
+        wasValid[symbol] = true
+        flash(symbol, 'valid')
+        toast.success(`${symbol} ổn định ✅`, {
+          position: 'bottom-right',
+          autoClose: 1500,
+        })
+      }
     }
+
+    // Nếu chưa đủ thời gian ổn định thì KHÔNG đổi state, cũng không đụng invalidOrder
   } else {
+    // Bất kỳ trạng thái nào khác “valid” => reset ổn định
     stableSince[symbol] = 0
     coinStatus[symbol] = newStatus
-    if (newStatus === 'invalid' && wasValid[symbol]) {
-      wasValid[symbol] = false
-      flash(symbol, 'invalid')
-      notify(symbol, 'invalid')
+
+    if (newStatus === 'invalid') {
+      // Vừa chuyển sang invalid -> đẩy lên đầu
+      pushFrontUnique(invalidOrder.value, symbol)
+
+      if (wasValid[symbol]) {
+        wasValid[symbol] = false
+        flash(symbol, 'invalid')
+        notify(symbol, 'invalid')
+      }
+    } else {
+      // rời invalid (sang low) -> loại khỏi invalidOrder
+      if (oldStatus === 'invalid') removeItem(invalidOrder.value, symbol)
     }
   }
 }
@@ -367,6 +408,10 @@ onMounted(async () => {
   }
 
   await Promise.all(topCoins.map((c) => collectInitialData(c.symbol, c.alphaId)))
+
+  // Điền invalidOrder theo thứ tự hiện có (giữ nguyên thứ tự ban đầu)
+  invalidOrder.value = topCoins.map((c) => c.symbol).filter((s) => coinStatus[s] === 'invalid')
+
   loading.value = false
 
   ws = new WebSocket(BINANCE_STREAM)
