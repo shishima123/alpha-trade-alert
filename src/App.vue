@@ -27,18 +27,14 @@
         :key="symbol"
         class="coin-card bg-gray-800 rounded-2xl shadow-md border border-gray-700 transition-all duration-300 p-5"
         :class="[
-          coinStatus[symbol] === 'valid'
-            ? 'ring-4 ring-green-400 shadow-xl scale-[1.02]'
-            : coinStatus[symbol] === 'low'
-              ? 'border-yellow-500 ring-2 ring-yellow-400 shadow-lg scale-[1.01]'
-              : '',
+          coinStatus[symbol] === 'valid' ? 'ring-4 ring-green-400 shadow-xl scale-[1.02]' : '',
           flashClass[symbol],
         ]"
       >
         <div class="flex items-center justify-between mb-3">
           <div>
             <h3 class="font-semibold text-lg">{{ symbol }}</h3>
-            <!-- 👇 thêm dòng này ngay bên dưới -->
+
             <span class="text-xs text-blue-400 block mb-3">
               (x4: {{ getDaysLeft(symbol) }} ngày)
             </span>
@@ -49,17 +45,10 @@
               class="text-sm font-medium px-2 py-1 rounded-full"
               :class="{
                 'bg-green-700 text-green-100': coinStatus[symbol] === 'valid',
-                'bg-yellow-700 text-yellow-100': coinStatus[symbol] === 'low',
                 'bg-red-700 text-red-100': coinStatus[symbol] === 'invalid',
               }"
             >
-              {{
-                coinStatus[symbol] === 'valid'
-                  ? 'Ổn định'
-                  : coinStatus[symbol] === 'low'
-                    ? 'Ổn định thấp'
-                    : 'Không ổn định'
-              }}
+              {{ coinStatus[symbol] === 'valid' ? 'Ổn định' : 'Không ổn định' }}
             </span>
 
             <span v-if="coinStatus[symbol] === 'valid'" class="text-xs text-gray-400 mt-1">
@@ -134,10 +123,19 @@
           </div>
 
           <div>
-            <label class="block text-sm mb-1">📊 Số bản ghi biến động tối đa</label>
+            <label class="block text-sm mb-1">⚠ Giới hạn biến động 1/2 đầu</label>
             <input
               type="number"
-              v-model.number="settings.maxInvalid"
+              v-model.number="settings.halfInvalidLimit"
+              class="w-full bg-gray-700 rounded p-2"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">⚠ Tổng giới hạn biến động</label>
+            <input
+              type="number"
+              v-model.number="settings.totalInvalidLimit"
               class="w-full bg-gray-700 rounded p-2"
             />
           </div>
@@ -188,10 +186,26 @@ interface PriceEntry {
 // =================== ⚙️ SETTINGS ===================
 const settings = useStorage('stability-settings', {
   MAX_RECORD: 20,
-  maxInvalid: 2,
   priceThreshold: 10,
   stableTime: 10000,
+  halfInvalidLimit: 2, // NEW
+  totalInvalidLimit: 3, // NEW
 })
+
+const defaultSettings = {
+  MAX_RECORD: 20,
+  priceThreshold: 10,
+  stableTime: 10000,
+  halfInvalidLimit: 2,
+  totalInvalidLimit: 3,
+}
+
+// Bổ sung các field thiếu trong localStorage
+settings.value = {
+  ...defaultSettings,
+  ...settings.value,
+}
+
 const showSettings = ref(false)
 const soundEnabled = ref(false)
 const loading = ref(true)
@@ -199,12 +213,12 @@ const now = ref(Date.now())
 
 // =================== 📊 CORE STATE ===================
 const priceTracker = reactive<Record<string, PriceEntry[]>>({})
-const coinStatus = reactive<Record<string, 'valid' | 'low' | 'invalid'>>({})
+const coinStatus = reactive<Record<string, 'valid' | 'invalid'>>({})
 const flashClass = reactive<Record<string, string>>({})
 const stableSince = reactive<Record<string, number>>({})
 const wasValid = reactive<Record<string, boolean>>({})
 const alphaToSymbol: Record<string, string> = {}
-const listingTimes: Record<string, number> = {} // ⏱️ lưu ngày list
+const listingTimes: Record<string, number> = {}
 
 const BINANCE_STREAM = 'wss://nbstream.binance.com/w3w/wsa/stream'
 const API_TOP =
@@ -229,18 +243,36 @@ function playSound(type: 'valid' | 'invalid') {
   audio.play().catch(() => {})
 }
 
-// =================== 🧮 STATUS CALC ===================
-function getStatus(arr: number[]): 'valid' | 'low' | 'invalid' {
-  if (arr.length < 2) return 'low'
-  let invalids = 0
+// STATUS ONLY: VALID or INVALID (dựa theo diff + limit)
+function getStatus(diffs: Array<number | null>): 'valid' | 'invalid' {
   const threshold = settings.value.priceThreshold
-  const limit = settings.value.maxInvalid
-  for (let i = 1; i < arr.length; i++) {
-    if (Math.abs((arr[i] - arr[i - 1]) * 1e8) > threshold) invalids++
+  const halfLimit = settings.value.halfInvalidLimit
+  const totalLimit = settings.value.totalInvalidLimit
+  const maxRecord = settings.value.MAX_RECORD
+
+  // Chưa đủ dữ liệu thì coi như valid
+  if (diffs.length < 2) return 'valid'
+
+  const half = Math.floor(maxRecord / 2)
+
+  let firstHalfInvalid = 0
+  let totalInvalid = 0
+
+  for (let i = 0; i < diffs.length; i++) {
+    const d = diffs[i]
+    if (d === null) continue
+
+    if (Math.abs(d) > threshold) {
+      totalInvalid++
+      if (i < half) firstHalfInvalid++
+    }
   }
-  if (invalids === 0) return 'valid'
-  if (invalids <= limit) return 'low'
-  return 'invalid'
+
+  if (firstHalfInvalid > halfLimit || totalInvalid > totalLimit) {
+    return 'invalid'
+  }
+
+  return 'valid'
 }
 
 // ⏳ Tính ngày còn lại x4
@@ -252,14 +284,13 @@ function getDaysLeft(symbol: string): number | null {
   return remaining < 0 ? 0 : remaining
 }
 
-// =================== 🔔 NOTIFY & FLASH ===================
-function flash(symbol: string, type: 'valid' | 'low' | 'invalid') {
-  flashClass[symbol] =
-    type === 'valid' ? 'flash-green' : type === 'low' ? 'flash-yellow' : 'flash-red'
+// UI effects
+function flash(symbol: string, type: 'valid' | 'invalid') {
+  flashClass[symbol] = type === 'valid' ? 'flash-green' : 'flash-red'
   setTimeout(() => (flashClass[symbol] = ''), 300)
 }
 function notify(symbol: string, type: 'valid' | 'invalid') {
-  if (type === 'invalid') playSound('invalid')
+  playSound(type)
   toast[type === 'valid' ? 'success' : 'error'](
     `${symbol} ${type === 'valid' ? 'ổn định ✅' : 'mất ổn định ❌'}`,
     { position: 'bottom-right', autoClose: 1500 },
@@ -282,16 +313,12 @@ function removeItem(arr: string[], s: string) {
 // =================== 🧠 STATUS SORTING ===================
 const sortedSymbols = computed(() => {
   const valid: string[] = []
-  const low: string[] = []
 
   for (const s in coinStatus) {
-    const st = coinStatus[s]
-    if (st === 'valid') valid.push(s)
-    else if (st === 'low') low.push(s)
-    // nhóm invalid KHÔNG sort ở đây, dùng invalidOrder để giữ thứ tự ổn định
+    if (coinStatus[s] === 'valid') valid.push(s)
   }
 
-  return [...valid, ...low, ...invalidOrder.value]
+  return [...valid, ...invalidOrder.value]
 })
 
 // =================== 📈 FETCH INIT DATA ===================
@@ -318,7 +345,9 @@ async function collectInitialData(symbol: string, alphaId: string) {
       diff: i === 0 ? null : (p - trades[i - 1]) * 1e8,
     }))
     priceTracker[symbol] = entries
-    const st = getStatus(trades)
+
+    const diffs = entries.map((e) => e.diff)
+    const st = getStatus(diffs)
     coinStatus[symbol] = st
     stableSince[symbol] = st === 'valid' ? Date.now() : 0
   } catch (err) {
@@ -331,73 +360,75 @@ function handlePriceUpdate(symbol: string, price: number) {
   const arr = priceTracker[symbol]
   const prev = arr[0]?.price
   const diff = prev != null ? (price - prev) * 1e8 : null
+
   arr.unshift({ price, diff })
   if (arr.length > settings.value.MAX_RECORD) arr.length = settings.value.MAX_RECORD
 
-  const prices = arr.map((x) => x.price)
-  const newStatus = getStatus(prices)
+  const diffs = arr.map((x) => x.diff)
+
+  // getStatus giờ đã dùng threshold + halfInvalidLimit + totalInvalidLimit
+  const newStatus = getStatus(diffs)
   const oldStatus = coinStatus[symbol]
-  if (newStatus === oldStatus) return
 
-  const t = Date.now()
+  // === ❗ BLOCK RENDER: TRẠNG THÁI GIỐNG NHAU THÌ KHÔNG LÀM GÌ ===
+  if (newStatus === oldStatus && oldStatus === 'invalid') return
 
+  // ============================================================
+  // 🟢 VALID LOGIC
+  // ============================================================
   if (newStatus === 'valid') {
+    const t = Date.now()
     if (!stableSince[symbol]) stableSince[symbol] = t
+
     if (t - stableSince[symbol] >= settings.value.stableTime) {
-      // Kiểm tra trước khi đổi trạng thái
-      const anyOtherValid = Object.entries(coinStatus).some(
-        ([s, st]) => s !== symbol && st === 'valid',
-      )
+      if (oldStatus !== 'valid') {
+        // 🔍 Kiểm tra xem hiện tại đã có coin nào khác đang valid chưa
+        const anyOtherValid = Object.entries(coinStatus).some(
+          ([s, st]) => s !== symbol && st === 'valid',
+        )
 
-      // Chưa có coin nào valid → phát âm thanh
-      if (!anyOtherValid) playSound('valid')
+        // 🔔 Chỉ phát âm khi ĐÂY là coin valid đầu tiên trong hệ thống
+        if (!anyOtherValid) {
+          playSound('valid')
+        }
 
-      coinStatus[symbol] = 'valid'
-      removeItem(invalidOrder.value, symbol)
+        coinStatus[symbol] = 'valid'
+        removeItem(invalidOrder.value, symbol)
 
-      wasValid[symbol] = true
-      flash(symbol, 'valid')
-      toast.success(`${symbol} ổn định ✅`, {
-        position: 'bottom-right',
-        autoClose: 1500,
-      })
-    }
-
-    // Nếu chưa đủ thời gian ổn định thì KHÔNG đổi state, cũng không đụng invalidOrder
-  } else {
-    // Bất kỳ trạng thái nào khác “valid” => reset ổn định
-    stableSince[symbol] = 0
-    coinStatus[symbol] = newStatus
-
-    if (newStatus === 'invalid') {
-      // Vừa chuyển sang invalid -> đẩy lên đầu
-      pushFrontUnique(invalidOrder.value, symbol)
-
-      if (wasValid[symbol]) {
-        wasValid[symbol] = false
-        flash(symbol, 'invalid')
-        notify(symbol, 'invalid')
+        wasValid[symbol] = true
+        flash(symbol, 'valid')
+        notify(symbol, 'valid')
       }
-    } else {
-      // rời invalid (sang low) -> loại khỏi invalidOrder
-      if (oldStatus === 'invalid') removeItem(invalidOrder.value, symbol)
     }
+    return
+  }
+
+  // ============================================================
+  // 🔴 INVALID LOGIC
+  // ============================================================
+  if (oldStatus !== 'invalid') {
+    coinStatus[symbol] = 'invalid'
+    stableSince[symbol] = 0
+    pushFrontUnique(invalidOrder.value, symbol)
+
+    wasValid[symbol] = false
+    flash(symbol, 'invalid')
+    notify(symbol, 'invalid')
   }
 }
 
-// =================== 🧩 RESET SETTINGS ===================
 function resetSettings() {
-  settings.value = { MAX_RECORD: 20, maxInvalid: 2, priceThreshold: 10, stableTime: 10000 }
-  toast.info('⚙️ Đã khôi phục cài đặt mặc định', { position: 'bottom-right', autoClose: 1500 })
+  settings.value = { ...defaultSettings }
+  toast.info('⚙️ Đã khôi phục cài đặt mặc định', { position: 'bottom-right' })
 }
 
-// =================== 🚀 INIT ===================
+// INIT
 onMounted(async () => {
   const topCoins = await getTopCoins()
 
   for (const c of topCoins) {
     priceTracker[c.symbol] = []
-    coinStatus[c.symbol] = 'low'
+    coinStatus[c.symbol] = 'invalid'
     flashClass[c.symbol] = ''
     stableSince[c.symbol] = 0
     wasValid[c.symbol] = false
@@ -474,20 +505,6 @@ onBeforeUnmount(() => {
     box-shadow: none;
   }
 }
-@keyframes smoothLow {
-  0% {
-    transform: scale(1);
-    box-shadow: 0 0 0 rgba(234, 179, 8, 0);
-  }
-  40% {
-    transform: scale(1.03);
-    box-shadow: 0 0 15px rgba(234, 179, 8, 0.5);
-  }
-  100% {
-    transform: scale(1);
-    box-shadow: none;
-  }
-}
 
 .flash-green {
   animation: smoothValid 0.8s ease-out;
@@ -495,9 +512,7 @@ onBeforeUnmount(() => {
 .flash-red {
   animation: smoothInvalid 0.8s ease-out;
 }
-.flash-yellow {
-  animation: smoothLow 0.8s ease-out;
-}
+
 .coin-card {
   border-radius: 1rem;
   padding: 1.25rem;
@@ -558,22 +573,6 @@ th {
 
 /* 🚫 Ẩn hoàn toàn mũi tên hai đầu */
 .custom-scroll::-webkit-scrollbar-button {
-  width: 0;
-  height: 0;
   display: none;
-  -webkit-appearance: none;
-  background: none;
-  content: none;
-}
-
-/* Safari đặc biệt đôi khi vẫn hiển thị — fix thêm */
-.custom-scroll::-webkit-scrollbar-button:start:decrement,
-.custom-scroll::-webkit-scrollbar-button:end:increment {
-  display: none;
-  width: 0;
-  height: 0;
-  -webkit-appearance: none;
-  background: none;
-  content: none;
 }
 </style>
