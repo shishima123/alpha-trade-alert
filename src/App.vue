@@ -370,8 +370,8 @@ function handlePriceUpdate(symbol: string, price: number) {
   const newStatus = getStatus(diffs)
   const oldStatus = coinStatus[symbol]
 
-  // === ❗ BLOCK RENDER: TRẠNG THÁI GIỐNG NHAU THÌ KHÔNG LÀM GÌ ===
-  if (newStatus === oldStatus && oldStatus === 'invalid') return
+  // ❗ CHẶN MỌI CASE KHÔNG ĐỔI TRẠNG THÁI
+  if (newStatus === oldStatus) return
 
   // ============================================================
   // 🟢 VALID LOGIC
