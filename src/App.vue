@@ -279,8 +279,13 @@ function getStatus(diffs: Array<number | null>): 'valid' | 'invalid' {
 function getDaysLeft(symbol: string): number | null {
   const t = listingTimes[symbol]
   if (!t) return null
+
   const end = t + 30 * 24 * 60 * 60 * 1000
-  const remaining = Math.floor((end - now.value) / (24 * 60 * 60 * 1000))
+  const utcNow = Date.now() - new Date().getTimezoneOffset() * 60 * 1000
+
+  // Dùng Math.ceil để còn vài giờ vẫn đếm 1 ngày
+  const remaining = Math.ceil((end - utcNow) / (24 * 60 * 60 * 1000))
+
   return remaining < 0 ? 0 : remaining
 }
 
@@ -290,7 +295,6 @@ function flash(symbol: string, type: 'valid' | 'invalid') {
   setTimeout(() => (flashClass[symbol] = ''), 300)
 }
 function notify(symbol: string, type: 'valid' | 'invalid') {
-  playSound(type)
   toast[type === 'valid' ? 'success' : 'error'](
     `${symbol} ${type === 'valid' ? 'ổn định ✅' : 'mất ổn định ❌'}`,
     { position: 'bottom-right', autoClose: 1500 },
@@ -414,6 +418,7 @@ function handlePriceUpdate(symbol: string, price: number) {
     wasValid[symbol] = false
     flash(symbol, 'invalid')
     notify(symbol, 'invalid')
+    playSound('invalid')
   }
 }
 
